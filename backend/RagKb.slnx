@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="RagKb.Api/RagKb.Api.csproj" />
+  <Project Path="RagKb.Tests/RagKb.Tests.csproj" />
+</Solution>
