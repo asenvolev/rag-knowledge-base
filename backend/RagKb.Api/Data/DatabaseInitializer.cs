@@ -11,12 +11,12 @@ namespace RagKb.Api.Data;
 /// </summary>
 public sealed class DatabaseInitializer(
     NpgsqlDataSource dataSource,
-    IOptions<OpenAiOptions> openAi,
+    IOptions<AiOptions> ai,
     ILogger<DatabaseInitializer> logger) : IHostedService
 {
     public async Task StartAsync(CancellationToken ct)
     {
-        var dims = openAi.Value.EmbeddingDimensions;
+        var dims = ai.Value.EmbeddingDimensions;
 
         // Postgres can't parameterise DDL; dims is a validated int from config, so interpolation is safe.
         var sql = $"""
@@ -26,11 +26,18 @@ public sealed class DatabaseInitializer(
                 id              uuid PRIMARY KEY,
                 file_name       text        NOT NULL,
                 file_size_bytes bigint      NOT NULL,
-                content_sha256  text        NOT NULL UNIQUE,
+                content_sha256  text        NOT NULL,
+                -- Which provider/model/size produced the vectors. Vectors from different models
+                -- live in different spaces, so search and listing only use the active model's rows.
+                embedding_model text        NOT NULL,
                 page_count      int         NOT NULL,
                 chunk_count     int         NOT NULL DEFAULT 0,
-                created_at      timestamptz NOT NULL DEFAULT now()
+                created_at      timestamptz NOT NULL DEFAULT now(),
+                UNIQUE (content_sha256, embedding_model)
             );
+
+            CREATE INDEX IF NOT EXISTS ix_documents_embedding_model
+                ON documents (embedding_model, created_at DESC);
 
             CREATE TABLE IF NOT EXISTS document_chunks (
                 id           bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

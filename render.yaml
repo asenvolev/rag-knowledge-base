@@ -25,5 +25,7 @@ services:
         fromDatabase:
           name: ragkb-db
           property: connectionString
-      - key: OpenAI__ApiKey
-        sync: false   # Render asks for it when you create the Blueprint
+      - key: AI__Provider
+        value: Gemini   # Gemini (free tier) or OpenAI (paid, private)
+      - key: AI__ApiKey
+        sync: false     # Render asks for it when you create the Blueprint

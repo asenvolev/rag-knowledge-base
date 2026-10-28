@@ -2,7 +2,7 @@
 
 Upload PDFs, ask questions, get answers grounded in your documents with page-level sources.
 
-**Stack:** .NET 10 Web API · PostgreSQL 16 + pgvector (HNSW, cosine) · Dapper · OpenAI `text-embedding-3-small` + `gpt-4o-mini` · React 19 + Vite + TailwindCSS 4
+**Stack:** .NET 10 Web API · PostgreSQL 16 + pgvector (HNSW, cosine) · Dapper · Google Gemini (free tier) **or** OpenAI, switchable by config · React 19 + Vite + TailwindCSS 4
 
 ![screenshot](docs/screenshot.png)
 
@@ -40,7 +40,8 @@ docker compose up -d postgres
 
 # 2. Backend (http://localhost:5080)
 cd backend/RagKb.Api
-dotnet user-secrets set "OpenAI:ApiKey" "sk-..."
+dotnet user-secrets set "AI:ApiKey" "<your Gemini or OpenAI key>"
+# optional: dotnet user-secrets set "AI:Provider" "OpenAI"
 dotnet run
 
 # 3. Frontend (http://localhost:5173)
@@ -50,7 +51,7 @@ npm install
 npm run dev
 ```
 
-Everything in Docker instead: `cp .env.example .env`, fill `OPENAI_API_KEY`, then `docker compose --profile full up --build` and open http://localhost:5080 (UI + API).
+Everything in Docker instead: `cp .env.example .env`, fill `AI_API_KEY`, then `docker compose --profile full up --build` and open http://localhost:5080 (UI + API).
 
 Smoke test without the UI:
 
@@ -68,7 +69,10 @@ All settings live in `appsettings.json` and can be overridden with environment v
 
 | Variable | Default | Notes |
 |---|---|---|
-| `OpenAI__ApiKey` | – | **required** |
+| `AI__Provider` | `Gemini` | `Gemini` or `OpenAI` |
+| `AI__ApiKey` | – | **required** — Gemini key from aistudio.google.com/apikey, or an OpenAI key |
+| `AI__ChatModel` / `AI__EmbeddingModel` | provider default | Gemini: `gemini-3.8-flash` / `gemini-embedding-001`; OpenAI: `gpt-4o-mini` / `text-embedding-3-small` |
+| `AI__Endpoint` | provider default | override for Azure OpenAI or a proxy |
 | `DATABASE_URL` | – | `postgres://…` URL; wins over `ConnectionStrings__Postgres` |
 | `ConnectionStrings__Postgres` | local docker | Npgsql key=value string |
 | `Rag__ChunkSize` / `Rag__ChunkOverlap` | 1000 / 200 | overlap ≤ half of size |
@@ -77,7 +81,7 @@ All settings live in `appsettings.json` and can be overridden with environment v
 | `Security__AllowedOrigins__0..n` | `http://localhost:5173` | CORS; `https://*.vercel.app` allowed as a pattern |
 | `Security__ApiKey` | empty (off) | when set, `/api/*` requires `X-Api-Key` |
 
-> Changing `OpenAI__EmbeddingDimensions` after data exists requires dropping `document_chunks` (the column is `vector(1536)`).
+> Each document remembers which provider/model embedded it. After switching `AI__Provider`, the library shows only documents embedded by the active model, so re-upload the PDFs you need. Changing `AI__EmbeddingDimensions` after data exists requires dropping `document_chunks` (the column is `vector(1536)`).
 
 ## Push to GitHub
 
@@ -97,12 +101,22 @@ git push -u origin main
 
 Before pushing, check that no secret is staged: `git grep -n "sk-" -- . ':!*.md'` should return nothing.
 
+## AI providers: free vs. private
+
+| | Gemini (default) | OpenAI |
+|---|---|---|
+| Cost | free tier, no card (low per-minute limits) | pay-as-you-go, ~$0.0005 per question with `gpt-4o-mini` |
+| Your data | Google may use free-tier prompts to improve its products | API data is not used for training by default |
+| Use for | demos, testing with public documents | customers with confidential documents |
+
+Both go through the same OpenAI-compatible code path (`Services/AiService.cs`); switching is one environment variable.
+
 ## Free live demo on Render (one URL, phone-friendly)
 
 The root `Dockerfile` builds the React app and serves it from the API's `wwwroot`, so the whole demo is one service with no CORS setup. `render.yaml` also creates a free Postgres.
 
 1. render.com → **New + → Blueprint** → connect GitHub → pick this repo → **Apply**.
-2. When asked, paste your OpenAI key into `OpenAI__ApiKey`.
+2. When asked, paste your key into `AI__ApiKey`. The Blueprint sets `AI__Provider=Gemini`; get a free key at aistudio.google.com/apikey (no card).
 3. Wait for the first build (5–8 min: npm + dotnet restore + publish).
 4. Open `https://ragkb-xxxx.onrender.com` on your phone. `/health` should say `healthy`.
 

@@ -48,7 +48,7 @@ public sealed class RagService(
         buffer.Position = 0;
 
         var sha256 = Convert.ToHexStringLower(await SHA256.HashDataAsync(buffer, ct));
-        var existing = await repository.FindByHashAsync(sha256, ct);
+        var existing = await repository.FindByHashAsync(sha256, embeddings.ModelId, ct);
         if (existing is not null)
         {
             logger.LogInformation("Duplicate upload of {File}; returning existing document {Id}", fileName, existing.Id);
@@ -70,12 +70,12 @@ public sealed class RagService(
         DocumentRecord saved;
         try
         {
-            saved = await repository.InsertDocumentWithChunksAsync(document, sha256, rows, ct);
+            saved = await repository.InsertDocumentWithChunksAsync(document, sha256, embeddings.ModelId, rows, ct);
         }
         catch (Npgsql.PostgresException ex) when (ex.SqlState == Npgsql.PostgresErrorCodes.UniqueViolation)
         {
             // Same file uploaded concurrently — the other request won the race.
-            saved = await repository.FindByHashAsync(sha256, ct)
+            saved = await repository.FindByHashAsync(sha256, embeddings.ModelId, ct)
                     ?? throw new InvalidOperationException("Duplicate document disappeared during upload.", ex);
         }
 
@@ -95,7 +95,7 @@ public sealed class RagService(
         var retrievalQuery = lastUserTurn is null ? question : $"{lastUserTurn}\n{question}";
 
         var queryVector = await embeddings.EmbedAsync(retrievalQuery, ct);
-        var hits = await repository.SearchAsync(queryVector, _rag.TopK, _rag.MinSimilarity, request.DocumentId, ct);
+        var hits = await repository.SearchAsync(queryVector, embeddings.ModelId, _rag.TopK, _rag.MinSimilarity, request.DocumentId, ct);
 
         if (hits.Count == 0)
         {

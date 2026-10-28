@@ -15,6 +15,7 @@ namespace RagKb.Api.Controllers;
 public sealed class DocumentController(
     IRagService rag,
     IDocumentRepository repository,
+    IEmbeddingService embeddings,
     IOptions<RagOptions> ragOptions) : ControllerBase
 {
     private static ReadOnlySpan<byte> PdfMagic => "%PDF-"u8;
@@ -68,7 +69,7 @@ public sealed class DocumentController(
     [HttpGet]
     [ProducesResponseType<IReadOnlyList<DocumentRecord>>(StatusCodes.Status200OK)]
     public async Task<ActionResult<IReadOnlyList<DocumentRecord>>> List(CancellationToken ct)
-        => Ok(await repository.ListAsync(ct));
+        => Ok(await repository.ListAsync(embeddings.ModelId, ct));
 
     [HttpDelete("{id:guid}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]

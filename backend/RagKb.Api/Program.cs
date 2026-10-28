@@ -1,9 +1,11 @@
+using System.ClientModel;
 using System.Threading.RateLimiting;
 using Dapper;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Options;
 using Npgsql;
+using OpenAI;
 using OpenAI.Chat;
 using OpenAI.Embeddings;
 using Pgvector.Dapper;
@@ -20,8 +22,8 @@ if (!string.IsNullOrWhiteSpace(port))
     builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 
 // ---------- Options (validated at startup — fail fast on a missing API key) ----------
-builder.Services.AddOptions<OpenAiOptions>()
-    .BindConfiguration(OpenAiOptions.SectionName)
+builder.Services.AddOptions<AiOptions>()
+    .BindConfiguration(AiOptions.SectionName)
     .ValidateDataAnnotations()
     .ValidateOnStart();
 
@@ -49,20 +51,23 @@ builder.Services.AddSingleton(_ =>
 builder.Services.AddHostedService<DatabaseInitializer>();
 builder.Services.AddSingleton<IDocumentRepository, DocumentRepository>();
 
-// ---------- OpenAI (official SDK; clients are thread-safe and meant to be singletons) ----------
+// ---------- AI provider: Gemini (free tier) or OpenAI, both via the OpenAI SDK ----------
+// Clients are thread-safe and meant to be singletons.
+static OpenAIClientOptions ClientOptions(AiOptions o) => new() { Endpoint = new Uri(o.ResolvedEndpoint) };
+
 builder.Services.AddSingleton(sp =>
 {
-    var o = sp.GetRequiredService<IOptions<OpenAiOptions>>().Value;
-    return new EmbeddingClient(o.EmbeddingModel, o.ApiKey);
+    var o = sp.GetRequiredService<IOptions<AiOptions>>().Value;
+    return new EmbeddingClient(o.ResolvedEmbeddingModel, new ApiKeyCredential(o.ApiKey), ClientOptions(o));
 });
 builder.Services.AddSingleton(sp =>
 {
-    var o = sp.GetRequiredService<IOptions<OpenAiOptions>>().Value;
-    return new ChatClient(o.ChatModel, o.ApiKey);
+    var o = sp.GetRequiredService<IOptions<AiOptions>>().Value;
+    return new ChatClient(o.ResolvedChatModel, new ApiKeyCredential(o.ApiKey), ClientOptions(o));
 });
-builder.Services.AddSingleton<OpenAiService>();
-builder.Services.AddSingleton<IEmbeddingService>(sp => sp.GetRequiredService<OpenAiService>());
-builder.Services.AddSingleton<IChatService>(sp => sp.GetRequiredService<OpenAiService>());
+builder.Services.AddSingleton<AiService>();
+builder.Services.AddSingleton<IEmbeddingService>(sp => sp.GetRequiredService<AiService>());
+builder.Services.AddSingleton<IChatService>(sp => sp.GetRequiredService<AiService>());
 
 // ---------- RAG pipeline ----------
 builder.Services.AddSingleton<IPdfTextExtractor, PdfTextExtractor>();

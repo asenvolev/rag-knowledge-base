@@ -30,7 +30,8 @@ services:
         condition: service_healthy
     environment:
       ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=ragkb;Username=ragkb;Password=${POSTGRES_PASSWORD:-ragkb_dev_password}"
-      OpenAI__ApiKey: ${OPENAI_API_KEY:?Set OPENAI_API_KEY in .env}
+      AI__Provider: ${AI_PROVIDER:-Gemini}
+      AI__ApiKey: ${AI_API_KEY:?Set AI_API_KEY in .env}
       Security__AllowedOrigins__0: "http://localhost:5173"   # UI is also served by the API at http://localhost:5080
       Security__ApiKey: ${API_KEY:-}
     ports:

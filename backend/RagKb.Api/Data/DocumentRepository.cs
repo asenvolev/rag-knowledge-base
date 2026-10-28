@@ -8,13 +8,13 @@ namespace RagKb.Api.Data;
 
 public interface IDocumentRepository
 {
-    Task<DocumentRecord?> FindByHashAsync(string sha256, CancellationToken ct);
+    Task<DocumentRecord?> FindByHashAsync(string sha256, string embeddingModel, CancellationToken ct);
     Task<DocumentRecord> InsertDocumentWithChunksAsync(
-        DocumentRecord document, string sha256, IReadOnlyList<ChunkForInsert> chunks, CancellationToken ct);
-    Task<IReadOnlyList<DocumentRecord>> ListAsync(CancellationToken ct);
+        DocumentRecord document, string sha256, string embeddingModel, IReadOnlyList<ChunkForInsert> chunks, CancellationToken ct);
+    Task<IReadOnlyList<DocumentRecord>> ListAsync(string embeddingModel, CancellationToken ct);
     Task<bool> DeleteAsync(Guid id, CancellationToken ct);
     Task<IReadOnlyList<ChunkSearchResult>> SearchAsync(
-        ReadOnlyMemory<float> queryEmbedding, int topK, double minSimilarity, Guid? documentId, CancellationToken ct);
+        ReadOnlyMemory<float> queryEmbedding, string embeddingModel, int topK, double minSimilarity, Guid? documentId, CancellationToken ct);
 }
 
 /// <summary>
@@ -32,23 +32,23 @@ public sealed class DocumentRepository(NpgsqlDataSource dataSource) : IDocumentR
         created_at      AS CreatedAt
         """;
 
-    public async Task<DocumentRecord?> FindByHashAsync(string sha256, CancellationToken ct)
+    public async Task<DocumentRecord?> FindByHashAsync(string sha256, string embeddingModel, CancellationToken ct)
     {
         await using var conn = await dataSource.OpenConnectionAsync(ct);
         return await conn.QuerySingleOrDefaultAsync<DocumentRecord>(new CommandDefinition(
-            $"SELECT {DocumentColumns} FROM documents WHERE content_sha256 = @sha256",
-            new { sha256 }, cancellationToken: ct));
+            $"SELECT {DocumentColumns} FROM documents WHERE content_sha256 = @sha256 AND embedding_model = @embeddingModel",
+            new { sha256, embeddingModel }, cancellationToken: ct));
     }
 
     public async Task<DocumentRecord> InsertDocumentWithChunksAsync(
-        DocumentRecord document, string sha256, IReadOnlyList<ChunkForInsert> chunks, CancellationToken ct)
+        DocumentRecord document, string sha256, string embeddingModel, IReadOnlyList<ChunkForInsert> chunks, CancellationToken ct)
     {
         await using var conn = await dataSource.OpenConnectionAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
 
         await conn.ExecuteAsync(new CommandDefinition("""
-            INSERT INTO documents (id, file_name, file_size_bytes, content_sha256, page_count, chunk_count)
-            VALUES (@Id, @FileName, @FileSizeBytes, @Sha256, @PageCount, @ChunkCount)
+            INSERT INTO documents (id, file_name, file_size_bytes, content_sha256, embedding_model, page_count, chunk_count)
+            VALUES (@Id, @FileName, @FileSizeBytes, @Sha256, @EmbeddingModel, @PageCount, @ChunkCount)
             """,
             new
             {
@@ -56,6 +56,7 @@ public sealed class DocumentRepository(NpgsqlDataSource dataSource) : IDocumentR
                 document.FileName,
                 document.FileSizeBytes,
                 Sha256 = sha256,
+                EmbeddingModel = embeddingModel,
                 document.PageCount,
                 ChunkCount = chunks.Count
             },
@@ -85,12 +86,12 @@ public sealed class DocumentRepository(NpgsqlDataSource dataSource) : IDocumentR
         return saved;
     }
 
-    public async Task<IReadOnlyList<DocumentRecord>> ListAsync(CancellationToken ct)
+    public async Task<IReadOnlyList<DocumentRecord>> ListAsync(string embeddingModel, CancellationToken ct)
     {
         await using var conn = await dataSource.OpenConnectionAsync(ct);
         var rows = await conn.QueryAsync<DocumentRecord>(new CommandDefinition(
-            $"SELECT {DocumentColumns} FROM documents ORDER BY created_at DESC LIMIT 500",
-            cancellationToken: ct));
+            $"SELECT {DocumentColumns} FROM documents WHERE embedding_model = @embeddingModel ORDER BY created_at DESC LIMIT 500",
+            new { embeddingModel }, cancellationToken: ct));
         return rows.AsList();
     }
 
@@ -108,7 +109,7 @@ public sealed class DocumentRepository(NpgsqlDataSource dataSource) : IDocumentR
     /// Postgres use the HNSW index; the similarity threshold is applied on the small top-N set.
     /// </summary>
     public async Task<IReadOnlyList<ChunkSearchResult>> SearchAsync(
-        ReadOnlyMemory<float> queryEmbedding, int topK, double minSimilarity, Guid? documentId, CancellationToken ct)
+        ReadOnlyMemory<float> queryEmbedding, string embeddingModel, int topK, double minSimilarity, Guid? documentId, CancellationToken ct)
     {
         const string sql = """
             WITH nearest AS (
@@ -119,6 +120,7 @@ public sealed class DocumentRepository(NpgsqlDataSource dataSource) : IDocumentR
                         c.content,
                         c.embedding <=> @embedding AS distance
                 FROM    document_chunks c
+                JOIN    documents dm ON dm.id = c.document_id AND dm.embedding_model = @embeddingModel
                 WHERE   (@documentId::uuid IS NULL OR c.document_id = @documentId::uuid)
                 ORDER BY c.embedding <=> @embedding
                 LIMIT   @candidates
@@ -146,6 +148,7 @@ public sealed class DocumentRepository(NpgsqlDataSource dataSource) : IDocumentR
         var rows = await conn.QueryAsync<ChunkSearchResult>(new CommandDefinition(sql, new
         {
             embedding = new Vector(queryEmbedding),
+            embeddingModel,
             documentId,
             candidates = Math.Max(topK * 4, 20),
             minSimilarity,
